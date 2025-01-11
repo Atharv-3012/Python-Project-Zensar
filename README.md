@@ -4,6 +4,7 @@
 ## Project Information
 - **Name:** Wadekar Atharv Vinayak
 - **Year:** T.E Computer Engineering
+- **Contact:** atharvawadekar3012@gmail.com
 
 ## Description
 The Live Cricket Score Management System is a Python-based project designed to manage and display real-time cricket match scores using SQLite for database operations. The system efficiently handles data related to players, teams, matches, and scores. It provides functions to dynamically input, update, and retrieve match details, enabling seamless score management.
@@ -20,10 +21,3 @@ The Live Cricket Score Management System is a Python-based project designed to m
 - **Libraries Used:** 
   - `sqlite3` for database interactions
   - `datetime` for timestamp management
-
-## Author
-Wadekar Atharv Vinayak
-
-## Contact
-For any questions or issues, contact [Your Email].
-
