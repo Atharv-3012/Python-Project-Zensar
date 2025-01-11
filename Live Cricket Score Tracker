@@ -1,120 +1,113 @@
-import sqlite3
-from datetime import datetime
+import mysql.connector
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import json
+import urllib.parse
 
-# Create and connect to SQLite database
-conn = sqlite3.connect('cricket_scores.db')
-cursor = conn.cursor()
+# MySQL database connection
+def get_db_connection():
+    return mysql.connector.connect(
+        host="localhost",  # Replace with your database host
+        user="root",       # Replace with your MySQL username
+        password="root",   # Replace with your MySQL password
+        database="cricket_tracker"
+    )
 
-# Create Tables
-cursor.executescript('''
-CREATE TABLE IF NOT EXISTS Teams (
-    team_id INTEGER PRIMARY KEY,
-    team_name TEXT NOT NULL
-);
+# Handler class to handle GET and POST requests
+class CricketScoreHandler(BaseHTTPRequestHandler):
 
-CREATE TABLE IF NOT EXISTS Players (
-    player_id INTEGER PRIMARY KEY,
-    player_name TEXT NOT NULL,
-    team_id INTEGER,
-    FOREIGN KEY (team_id) REFERENCES Teams(team_id)
-);
+    # Handle GET request
+    def do_GET(self):
+        if self.path == '/api/scores':
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute('SELECT team1_score, team2_score, innings FROM cricket_scores WHERE id = 1')
+            result = cursor.fetchone()
 
-CREATE TABLE IF NOT EXISTS Matches (
-    match_id INTEGER PRIMARY KEY,
-    team1_id INTEGER,
-    team2_id INTEGER,
-    match_date TEXT,
-    venue TEXT,
-    FOREIGN KEY (team1_id) REFERENCES Teams(team_id),
-    FOREIGN KEY (team2_id) REFERENCES Teams(team_id)
-);
+            if result:
+                response = {
+                    'team1_score': result[0],
+                    'team2_score': result[1],
+                    'innings': result[2]
+                }
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps(response).encode())
+            else:
+                self.send_response(404)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'message': 'No score data found.'}).encode())
+            
+            conn.close()
+        else:
+            self.send_response(404)
+            self.end_headers()
 
-CREATE TABLE IF NOT EXISTS Scores (
-    score_id INTEGER PRIMARY KEY,
-    match_id INTEGER,
-    player_id INTEGER,
-    runs INTEGER DEFAULT 0,
-    balls INTEGER DEFAULT 0,
-    fours INTEGER DEFAULT 0,
-    sixes INTEGER DEFAULT 0,
-    timestamp TEXT DEFAULT (datetime('now')),
-    FOREIGN KEY (match_id) REFERENCES Matches(match_id),
-    FOREIGN KEY (player_id) REFERENCES Players(player_id)
-);
-''')
+    # Handle POST request
+    def do_POST(self):
+        if self.path == '/api/scores/update':
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length)
 
-# Insert initial data for Teams
-cursor.executemany('''
-INSERT OR IGNORE INTO Teams (team_id, team_name) VALUES (?, ?)
-''', [(1, 'Team A'), (2, 'Team B')])
+            # Parse the JSON data sent in the POST request
+            data = json.loads(post_data.decode('utf-8'))
 
-# Insert initial data for Players
-cursor.executemany('''
-INSERT OR IGNORE INTO Players (player_id, player_name, team_id) VALUES (?, ?, ?)
-''', [(1, 'Player 1', 1), (2, 'Player 2', 1), (3, 'Player 3', 2), (4, 'Player 4', 2)])
+            team = data.get('team')
+            runs = data.get('runs')
 
-# Insert initial data for Matches
-cursor.execute('''
-INSERT OR IGNORE INTO Matches (match_id, team1_id, team2_id, match_date, venue)
-VALUES (?, ?, ?, ?, ?)
-''', (1, 1, 2, '2025-01-08', 'Stadium A'))
+            if not team or not runs:
+                self.send_response(400)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'message': 'Team and runs are required.'}).encode())
+                return
 
-# Insert initial data for Scores
-cursor.executemany('''
-INSERT OR IGNORE INTO Scores (score_id, match_id, player_id, runs, balls, fours, sixes, timestamp) 
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-''', [
-    (1, 1, 1, 45, 30, 4, 2, datetime.now().isoformat()),
-    (2, 1, 3, 55, 35, 5, 3, datetime.now().isoformat())
-])
+            conn = get_db_connection()
+            cursor = conn.cursor()
 
-conn.commit()
+            if team == 'team1':
+                cursor.execute('UPDATE cricket_scores SET team1_score = team1_score + %s WHERE id = 1', (runs,))
+            elif team == 'team2':
+                cursor.execute('UPDATE cricket_scores SET team2_score = team2_score + %s WHERE id = 1', (runs,))
+            else:
+                self.send_response(400)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'message': 'Invalid team name.'}).encode())
+                conn.close()
+                return
 
-# Function to update player scores
-def update_score(match_id, player_id, runs, balls, fours, sixes):
-    cursor.execute('''
-    UPDATE Scores
-    SET runs = runs + ?, balls = balls + ?, fours = fours + ?, sixes = sixes + ?, timestamp = ?
-    WHERE match_id = ? AND player_id = ?
-    ''', (runs, balls, fours, sixes, datetime.now().isoformat(), match_id, player_id))
-    conn.commit()
-    print(f"Score updated for Player ID {player_id} in Match ID {match_id}.")
+            conn.commit()
+            conn.close()
 
-# Function to get live score
-def get_live_score(match_id):
-    cursor.execute('''
-    SELECT SUM(runs) FROM Scores
-    JOIN Players ON Scores.player_id = Players.player_id
-    WHERE match_id = ? AND Players.team_id = (SELECT team1_id FROM Matches WHERE match_id = ?)
-    ''', (match_id, match_id))
-    team1_runs = cursor.fetchone()[0] or 0
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({'message': f'Updated {team} score by {runs} runs.'}).encode())
+        
+        elif self.path == '/api/innings':
+            conn = get_db_connection()
+            cursor = conn.cursor()
 
-    cursor.execute('''
-    SELECT SUM(runs) FROM Scores
-    JOIN Players ON Scores.player_id = Players.player_id
-    WHERE match_id = ? AND Players.team_id = (SELECT team2_id FROM Matches WHERE match_id = ?)
-    ''', (match_id, match_id))
-    team2_runs = cursor.fetchone()[0] or 0
+            cursor.execute('UPDATE cricket_scores SET innings = innings + 1 WHERE id = 1')
+            conn.commit()
+            conn.close()
 
-    return f"Team A: {team1_runs} | Team B: {team2_runs}"
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({'message': 'Innings changed.'}).encode())
+        else:
+            self.send_response(404)
+            self.end_headers()
 
-# Function to display match details
-def show_match_details(match_id):
-    cursor.execute('''
-    SELECT t1.team_name, t2.team_name, m.venue, m.match_date
-    FROM Matches m
-    JOIN Teams t1 ON m.team1_id = t1.team_id
-    JOIN Teams t2 ON m.team2_id = t2.team_id
-    WHERE m.match_id = ?
-    ''', (match_id,))
-    match = cursor.fetchone()
-    if match:
-        print(f"Match between {match[0]} and {match[1]} at {match[2]} on {match[3]}.")
+# Set up and start the server
+def run(server_class=HTTPServer, handler_class=CricketScoreHandler, port=8080):
+    server_address = ('', port)
+    httpd = server_class(server_address, handler_class)
+    print(f'Starting server on port {port}...')
+    httpd.serve_forever()
 
-# Example operations
-update_score(1, 1, 10, 5, 1, 0)
-print(get_live_score(1))
-show_match_details(1)
-
-# Close the connection
-conn.close()
+if __name__ == '__main__':
+    run()
